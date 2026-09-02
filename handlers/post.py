@@ -6,7 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, StateFilter
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    FSInputFile, InputMediaPhoto,
+    FSInputFile, InputMediaPhoto, MessageEntity,
 )
 from services.watermark import process_watermark
 from config import CHANNEL_ID, CHANNEL_USERNAME, WATERMARK_TEXT
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 MAX_PHOTOS = 10
+PROGRESS_STEPS = ["⬜⬜⬜⬜⬜", "⬛⬜⬜⬜⬜", "⬛⬛⬜⬜⬜", "⬛⬛⬛⬜⬜", "⬛⬛⬛⬛⬜", "⬛⬛⬛⬛⬛"]
 
 
 class PostStates(StatesGroup):
@@ -30,14 +31,26 @@ def _collection_kb(count: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
+async def _refresh_ctrl(bot: Bot, chat_id: int, state: FSMContext, text: str, kb: InlineKeyboardMarkup | None):
+    """Delete the old control message and send a new one at the bottom."""
+    data = await state.get_data()
+    old_id = data.get("ctrl_msg_id")
+    if old_id:
+        try:
+            await bot.delete_message(chat_id, old_id)
+        except Exception:
+            pass
+    ctrl = await bot.send_message(chat_id, text, reply_markup=kb)
+    await state.update_data(ctrl_msg_id=ctrl.message_id)
+    return ctrl
+
+
 # photo sent with no active state -> start the flow
 @router.message(StateFilter(None), F.photo)
-async def got_first_photo(message: Message, state: FSMContext):
-    file_id = message.photo[-1].file_id
-    await state.update_data(photo_file_ids=[file_id])
+async def got_first_photo(message: Message, state: FSMContext, bot: Bot):
+    await state.update_data(photo_file_ids=[message.photo[-1].file_id])
     await state.set_state(PostStates.collecting_photos)
-    ctrl = await message.answer("1 photo added.", reply_markup=_collection_kb(1))
-    await state.update_data(ctrl_msg_id=ctrl.message_id)
+    await _refresh_ctrl(bot, message.chat.id, state, "1 photo added.", _collection_kb(1))
 
 
 # additional photos while collecting
@@ -50,12 +63,7 @@ async def got_extra_photo(message: Message, state: FSMContext, bot: Bot):
         return
     ids.append(message.photo[-1].file_id)
     await state.update_data(photo_file_ids=ids)
-    await bot.edit_message_text(
-        f"{len(ids)} photo(s) added.",
-        chat_id=message.chat.id,
-        message_id=data["ctrl_msg_id"],
-        reply_markup=_collection_kb(len(ids)),
-    )
+    await _refresh_ctrl(bot, message.chat.id, state, f"{len(ids)} photo(s) added.", _collection_kb(len(ids)))
 
 
 @router.message(PostStates.collecting_photos)
@@ -64,15 +72,21 @@ async def wrong_input_collecting(message: Message):
 
 
 @router.callback_query(F.data == "add_photo", PostStates.collecting_photos)
-async def prompt_add_photo(callback: CallbackQuery):
-    await callback.answer("Send the next photo.")
+async def prompt_add_photo(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    count = len(data["photo_file_ids"])
+    await callback.message.edit_text(
+        f"{count} photo(s) added. Send the new photo(s) you want to add.",
+        reply_markup=_collection_kb(count),
+    )
 
 
 @router.callback_query(F.data == "done_collecting", PostStates.collecting_photos)
 async def done_collecting(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await state.set_state(PostStates.waiting_for_caption)
     await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(PostStates.waiting_for_caption)
     await callback.message.answer("Now send the caption.")
 
 
@@ -80,32 +94,40 @@ async def done_collecting(callback: CallbackQuery, state: FSMContext):
 async def got_caption(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     caption = message.text
+    entities = message.entities  # preserve formatting
     ids: list = data["photo_file_ids"]
 
-    # watermark all photos
+    # show loading indicator
+    progress_msg = await message.answer(PROGRESS_STEPS[0])
+
     watermarked_paths = []
     try:
-        for file_id in ids:
+        for i, file_id in enumerate(ids):
+            step = min(1 + i, len(PROGRESS_STEPS) - 1)
+            await progress_msg.edit_text(PROGRESS_STEPS[step])
             file = await bot.get_file(file_id)
             path = await process_watermark(bot, file, WATERMARK_TEXT, file.file_unique_id)
             watermarked_paths.append(path)
     except Exception as e:
         logger.error("Watermark processing failed: %s", e)
-        await message.answer("Failed to process images. Please try again by sending a photo.")
+        await progress_msg.edit_text("Failed to process images. Please try again by sending a photo.")
         await state.clear()
         return
 
+    await progress_msg.edit_text(PROGRESS_STEPS[-1])
+
     # send preview album
     media = [InputMediaPhoto(media=FSInputFile(p)) for p in watermarked_paths]
-    media[-1] = InputMediaPhoto(media=FSInputFile(watermarked_paths[-1]), caption=caption)
+    media[-1] = InputMediaPhoto(media=FSInputFile(watermarked_paths[-1]), caption=caption, caption_entities=entities)
     await message.answer_media_group(media=media)
 
-    # separate control message
+    await progress_msg.delete()
+
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Post to channel", callback_data="post_to_channel")
     ]])
     ctrl = await message.answer("Ready to post.", reply_markup=kb)
-    await state.update_data(watermarked_paths=watermarked_paths, caption=caption, ctrl_msg_id=ctrl.message_id)
+    await state.update_data(watermarked_paths=watermarked_paths, caption=caption, caption_entities=entities, ctrl_msg_id=ctrl.message_id)
     await state.set_state(None)
 
 
@@ -123,24 +145,29 @@ async def publish_to_channel(callback: CallbackQuery, state: FSMContext, bot: Bo
 
     paths: list = data["watermarked_paths"]
     caption: str = data["caption"]
+    entities: list[MessageEntity] | None = data.get("caption_entities")
+
+    await callback.answer()
+    await callback.message.edit_text(PROGRESS_STEPS[0], reply_markup=None)
 
     try:
         media = [InputMediaPhoto(media=FSInputFile(p)) for p in paths]
-        media[-1] = InputMediaPhoto(media=FSInputFile(paths[-1]), caption=caption)
+        media[-1] = InputMediaPhoto(media=FSInputFile(paths[-1]), caption=caption, caption_entities=entities)
+        await callback.message.edit_text(PROGRESS_STEPS[3])
         sent = await bot.send_media_group(CHANNEL_ID, media=media)
     except Exception as e:
         logger.error("Failed to post to channel: %s", e)
-        await callback.answer("Failed to post to channel. Check bot permissions.", show_alert=True)
+        await callback.message.edit_text("Failed to post to channel. Check bot permissions.")
         return
 
-    # sent is a list of messages; link to the first one
+    await callback.message.edit_text(PROGRESS_STEPS[-1])
+
     first_msg_id = sent[0].message_id
     if CHANNEL_USERNAME:
         posted_button = InlineKeyboardButton(text="Posted ✅", url=f"https://t.me/{CHANNEL_USERNAME}/{first_msg_id}")
     else:
         posted_button = InlineKeyboardButton(text="Posted ✅", callback_data="posted_noop")
     await callback.message.edit_text("Posted.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[posted_button]]))
-    await callback.answer("Posted!")
 
     for p in paths:
         for path in (p, p.replace("_wm.jpg", ".jpg")):
