@@ -16,7 +16,8 @@ async def process_watermark(bot, file, watermark_text: str, unique_id: str) -> s
     # scale everything relative to image width so watermark density/size
     # looks consistent regardless of the source photo's resolution
     font_size = max(18, int(width * 0.028))
-    tile_w, tile_h = int(width * 0.20), int(width * 0.07)
+    fill_alpha = 60
+    tile_w, tile_h = int(width * 0.22), int(width * 0.10)
     spacing_x, spacing_y = int(width * 0.32), int(width * 0.22)
 
     txt_layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
@@ -28,7 +29,7 @@ async def process_watermark(bot, file, watermark_text: str, unique_id: str) -> s
 
     tile = Image.new("RGBA", (tile_w, tile_h), (0, 0, 0, 0))
     ImageDraw.Draw(tile).text(
-        (tile_w * 0.05, tile_h * 0.3), watermark_text, font=font, fill=(255, 255, 255, 35)
+        (tile_w * 0.05, tile_h * 0.35), watermark_text, font=font, fill=(255, 255, 255, fill_alpha)
     )
     tile = tile.rotate(-22, expand=True)
 
