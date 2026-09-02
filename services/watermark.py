@@ -3,9 +3,7 @@ import os
 import logging
 
 logger = logging.getLogger(__name__)
-
 FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "font.ttf")
-
 
 async def process_watermark(bot, file, watermark_text: str, unique_id: str) -> str:
     os.makedirs("downloads", exist_ok=True)
@@ -13,20 +11,29 @@ async def process_watermark(bot, file, watermark_text: str, unique_id: str) -> s
     await bot.download_file(file.file_path, dest)
 
     base = Image.open(dest).convert("RGBA")
-    txt_layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    width, height = base.size
 
+    # scale everything relative to image width so watermark density/size
+    # looks consistent regardless of the source photo's resolution
+    font_size = max(18, int(width * 0.035))       # ~3.5% of width
+    tile_w, tile_h = int(width * 0.28), int(width * 0.09)
+    spacing_x, spacing_y = int(width * 0.23), int(width * 0.14)
+
+    txt_layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
     try:
-        font = ImageFont.truetype(FONT_PATH, 36)
+        font = ImageFont.truetype(FONT_PATH, font_size)
     except (IOError, OSError):
         logger.warning("font.ttf not found, falling back to default font")
-        font = ImageFont.load_default()
+        font = ImageFont.load_default(size=font_size)
 
-    tile = Image.new("RGBA", (300, 100), (0, 0, 0, 0))
-    ImageDraw.Draw(tile).text((10, 30), watermark_text, font=font, fill=(255, 255, 255, 80))
+    tile = Image.new("RGBA", (tile_w, tile_h), (0, 0, 0, 0))
+    ImageDraw.Draw(tile).text(
+        (tile_w * 0.05, tile_h * 0.3), watermark_text, font=font, fill=(255, 255, 255, 80)
+    )
     tile = tile.rotate(30, expand=True)
 
-    for y in range(-100, base.height, 150):
-        for x in range(-100, base.width, 250):
+    for y in range(-spacing_y, height, spacing_y):
+        for x in range(-spacing_x, width, spacing_x):
             txt_layer.paste(tile, (x, y), tile)
 
     out = Image.alpha_composite(base, txt_layer).convert("RGB")
