@@ -123,10 +123,14 @@ async def got_caption(message: Message, state: FSMContext, bot: Bot):
     progress_msg = await message.answer(PROGRESS_STEPS[0])
 
     watermarked_paths = []
+    total = len(ids)
     try:
         for i, file_id in enumerate(ids):
-            step = min(1 + i, len(PROGRESS_STEPS) - 1)
-            await progress_msg.edit_text(PROGRESS_STEPS[step])
+            step = round(i / total * (len(PROGRESS_STEPS) - 2)) + 1
+            try:
+                await progress_msg.edit_text(PROGRESS_STEPS[step])
+            except Exception:
+                pass
             file = await bot.get_file(file_id)
             path = await process_watermark(bot, file, WATERMARK_TEXT, file.file_unique_id)
             watermarked_paths.append(path)
@@ -136,7 +140,10 @@ async def got_caption(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
 
-    await progress_msg.edit_text(PROGRESS_STEPS[-1])
+    try:
+        await progress_msg.edit_text(PROGRESS_STEPS[-1])
+    except Exception:
+        pass
 
     # send preview album
     media = [InputMediaPhoto(media=FSInputFile(p)) for p in watermarked_paths]
