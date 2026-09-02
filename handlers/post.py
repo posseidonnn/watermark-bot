@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from aiogram import F, Router, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -15,7 +16,11 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 MAX_PHOTOS = 10
+BURST_TIMEOUT = 1.0  # seconds to wait for more photos in a burst
 PROGRESS_STEPS = ["⬜⬜⬜⬜⬜", "⬛⬜⬜⬜⬜", "⬛⬛⬜⬜⬜", "⬛⬛⬛⬜⬜", "⬛⬛⬛⬛⬜", "⬛⬛⬛⬛⬛"]
+
+# per-user burst timer tasks
+_burst_tasks: dict[int, asyncio.Task] = {}
 
 
 class PostStates(StatesGroup):
@@ -45,25 +50,42 @@ async def _refresh_ctrl(bot: Bot, chat_id: int, state: FSMContext, text: str, kb
     return ctrl
 
 
+async def _flush_burst(user_id: int, chat_id: int, bot: Bot, state: FSMContext):
+    """Called after BURST_TIMEOUT — update the control message with final count."""
+    await asyncio.sleep(BURST_TIMEOUT)
+    data = await state.get_data()
+    ids: list = data.get("photo_file_ids", [])
+    await _refresh_ctrl(bot, chat_id, state, f"{len(ids)} photo(s) added.", _collection_kb(len(ids)))
+    _burst_tasks.pop(user_id, None)
+
+
+def _schedule_burst(user_id: int, chat_id: int, bot: Bot, state: FSMContext):
+    """Cancel any existing burst timer and start a fresh one."""
+    existing = _burst_tasks.pop(user_id, None)
+    if existing:
+        existing.cancel()
+    _burst_tasks[user_id] = asyncio.create_task(_flush_burst(user_id, chat_id, bot, state))
+
+
 # photo sent with no active state -> start the flow
 @router.message(StateFilter(None), F.photo)
 async def got_first_photo(message: Message, state: FSMContext, bot: Bot):
-    await state.update_data(photo_file_ids=[message.photo[-1].file_id])
     await state.set_state(PostStates.collecting_photos)
-    await _refresh_ctrl(bot, message.chat.id, state, "1 photo added.", _collection_kb(1))
+    await state.update_data(photo_file_ids=[message.photo[-1].file_id])
+    _schedule_burst(message.from_user.id, message.chat.id, bot, state)
 
 
 # additional photos while collecting
 @router.message(PostStates.collecting_photos, F.photo)
 async def got_extra_photo(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    ids: list = data["photo_file_ids"]
+    ids: list = data.get("photo_file_ids", [])
     if len(ids) >= MAX_PHOTOS:
         await message.answer(f"Maximum {MAX_PHOTOS} photos reached.")
         return
     ids.append(message.photo[-1].file_id)
     await state.update_data(photo_file_ids=ids)
-    await _refresh_ctrl(bot, message.chat.id, state, f"{len(ids)} photo(s) added.", _collection_kb(len(ids)))
+    _schedule_burst(message.from_user.id, message.chat.id, bot, state)
 
 
 @router.message(PostStates.collecting_photos)
@@ -186,5 +208,8 @@ async def posted_noop(callback: CallbackQuery):
 
 @router.message(Command("cancel"))
 async def cancel(message: Message, state: FSMContext):
+    task = _burst_tasks.pop(message.from_user.id, None)
+    if task:
+        task.cancel()
     await state.clear()
     await message.answer("Cancelled.")
