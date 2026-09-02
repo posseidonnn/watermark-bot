@@ -16,7 +16,7 @@ async def process_watermark(bot, file, watermark_text: str, unique_id: str) -> s
     # scale everything relative to image width so watermark density/size
     # looks consistent regardless of the source photo's resolution
     font_size = max(18, int(width * 0.030))
-    fill_alpha = 75
+    fill_alpha = 95
     tile_w, tile_h = int(width * 0.30), int(width * 0.10)
     spacing_x, spacing_y = int(width * 0.50), int(width * 0.30)
 
