@@ -51,7 +51,35 @@ sudo systemctl enable --now watermark-bot
 
 ## Usage
 
-| Command   | Description              |
-|-----------|--------------------------|
-| `/post`   | Start the post flow      |
-| `/cancel` | Cancel the current flow  |
+Send a photo (or multiple photos) directly to the bot to start the post flow.
+
+| Command   | Description             |
+|-----------|-------------------------|
+| `/cancel` | Cancel the current flow |
+
+### Post flow
+
+1. Send one or more photos — you can send them all at once or one by one.
+2. Use **➕ Add photo** to add more, or **✅ Done** when finished.
+3. Send a caption, or use the buttons:
+   - **⏭ Skip Caption** — posts without a caption.
+   - **📋 Use Default Caption** — uses the `DEFAULT_CAPTION` value from `.env`.
+4. Tap **Post to channel** on the preview to publish.
+
+### Caption formatting
+
+Every caption — whether typed manually or using the default — is automatically
+posted with **bold**, _italic_, and blockquote formatting. You do not need to
+apply any formatting yourself; just type plain text.
+
+### Default caption
+
+Set `DEFAULT_CAPTION` in `.env` to any plain text string:
+
+```
+DEFAULT_CAPTION=Follow us for more content!
+```
+
+When you tap **📋 Use Default Caption**, this text is used and automatically
+formatted as bold + italic + blockquote. If `DEFAULT_CAPTION` is not set, the
+button will not appear.
