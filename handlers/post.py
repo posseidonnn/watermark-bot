@@ -40,7 +40,7 @@ def _caption_kb() -> InlineKeyboardMarkup:
 
 
 def _caption_entities(text: str) -> list[MessageEntity]:
-    length = len(text)
+    length = len(text.encode("utf-16-le")) // 2  
     return [
         MessageEntity(type="bold", offset=0, length=length),
         MessageEntity(type="italic", offset=0, length=length),
