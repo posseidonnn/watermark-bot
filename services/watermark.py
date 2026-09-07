@@ -11,13 +11,18 @@ FONT_CANDIDATES = [
     os.path.join(_BASE_DIR, "font.ttf"),
 ]
 
-# --- watermark look (all sizes are fractions of the image width, so the
-# --- result looks identical on a 720p photo and a 4K one) ---
-FONT_SCALE = 0.014        # cap height of the text
+# --- watermark look ---
+# Every size below is a fraction of the image's "reference size": the geometric
+# mean of width and height, i.e. the side of a square with the same area. Using
+# that instead of the width makes the mark identical on a portrait, landscape,
+# or square crop of the same resolution, and keeps it proportional from 720p to
+# 4K. Scaling off the width alone would make text on a 1080x1920 portrait
+# noticeably smaller than on a 1920x1080 landscape.
+FONT_SCALE = 0.0125       # cap height of the text
 MIN_FONT_SIZE = 8
 TRACKING_SCALE = 0.38     # extra space between letters, as a fraction of font size
-STEP_X_SCALE = 0.46       # horizontal distance between repeats
-STEP_Y_SCALE = 0.33       # vertical distance between repeats
+STEP_X_SCALE = 0.35       # horizontal distance between repeats
+STEP_Y_SCALE = 0.25       # vertical distance between repeats
 ROW_OFFSET = 0.5          # every other row is shifted by half a step (staggered grid)
 UPPERCASE = True
 
@@ -30,6 +35,11 @@ LIGHT_OPACITY = 30        # 0-255
 DARK_COLOR = (0, 0, 0)
 DARK_OPACITY = 26         # 0-255
 OUTLINE_SCALE = 0.10      # outline thickness as a fraction of font size (min 1px)
+
+
+def _reference_size(width: int, height: int) -> float:
+    """Aspect-ratio-independent scale basis: the side of an equal-area square."""
+    return (width * height) ** 0.5
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -94,7 +104,8 @@ def apply_watermark(base: Image.Image, watermark_text: str) -> Image.Image:
     if not text.strip():
         return base
 
-    font_size = max(MIN_FONT_SIZE, int(width * FONT_SCALE))
+    ref = _reference_size(width, height)
+    font_size = max(MIN_FONT_SIZE, int(ref * FONT_SCALE))
     tracking = font_size * TRACKING_SCALE
     font = _load_font(font_size)
     stroke_width = max(1, round(font_size * OUTLINE_SCALE))
@@ -103,8 +114,8 @@ def apply_watermark(base: Image.Image, watermark_text: str) -> Image.Image:
     ascent, descent = font.getmetrics()
     text_h = ascent + descent
 
-    step_x = max(int(text_w * 1.35), int(width * STEP_X_SCALE))
-    step_y = max(int(text_h * 2.0), int(width * STEP_Y_SCALE))
+    step_x = max(int(text_w * 1.35), int(ref * STEP_X_SCALE))
+    step_y = max(int(text_h * 2.0), int(ref * STEP_Y_SCALE))
 
     args = (base.size, text, font, tracking, step_x, step_y)
     body = _build_mask(*args, 0)
