@@ -1,3 +1,5 @@
-aiogram==3.15.0
-pillow>=10.0.0
-python-dotenv>=1.0.0
+aiogram
+pillow
+python-dotenv
+aiohttp
+tgcrypto
