@@ -17,7 +17,7 @@ router = Router()
 
 MAX_PHOTOS = 10
 BURST_TIMEOUT = 1.0
-PROGRESS_STEPS = ["⬜⬜⬜⬜⬜", "⬛⬜⬜⬜⬜", "⬛⬛⬜⬜⬜", "⬛⬛⬛⬜⬜", "⬛⬛⬛⬛⬜", "⬛⬛⬛⬛⬛"]
+PROGRESS_STEPS = ["░░░░░", "█░░░░", "██░░░", "███░░", "████░", "█████"]
 
 _burst_tasks: dict[int, asyncio.Task] = {}
 
@@ -160,7 +160,7 @@ async def _process_caption(message: Message, state: FSMContext, bot: Bot, captio
             path = await process_watermark(bot, file, WATERMARK_TEXT, file.file_unique_id)
             watermarked_paths.append(path)
     except Exception as e:
-        logger.error("Watermark processing failed: %s", e)
+        logger.error("Watermark processing failed: %s", e, exc_info=True)
         await progress_msg.edit_text("Failed to process images. Please try again by sending a photo.")
         await state.clear()
         return
