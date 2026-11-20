@@ -17,8 +17,8 @@ async def main():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Force IPv4: the VPS resolves api.telegram.org to IPv6 first
-    session = AiohttpSession()
+    # IPv4 only + lomba timeout (photo upload/download slow hole jate fail na kore)
+    session = AiohttpSession(timeout=180)
     session._connector_init["family"] = socket.AF_INET
 
     bot = Bot(token=BOT_TOKEN, session=session)
@@ -34,7 +34,7 @@ async def main():
                 await dp.start_polling(bot)
                 break
             except TelegramNetworkError as e:
-                logging.warning("Network error on startup, retrying in 5s: %s", e)
+                logging.warning("Network error, 5s pore retry: %s", e)
                 await asyncio.sleep(5)
     finally:
         await bot.session.close()
